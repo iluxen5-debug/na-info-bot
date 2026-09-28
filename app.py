@@ -9,7 +9,7 @@ import requests
 app = Flask(__name__)
 
 # Вставьте сюда НОВЫЙ токен, который вы получили у BotFather
-BOT_TOKEN = "ВСТАВЬТЕ_СЮДА_НОВЫЙ_ТОКЕН"
+BOT_TOKEN = "8946727041:AAEG59i90oVSglspSY97RpxP1YHxnoEVIu4"
 CHAT_ID = "-1003977168471"
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
