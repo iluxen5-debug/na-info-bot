@@ -8,7 +8,7 @@ import requests
 app = Flask(__name__)
 
 # --- ВАШИ ДАННЫЕ ---
-BOT_TOKEN = "8946727041:AAEG59i90oVSglspSY97RpxP1YHxnoEVIu4"
+BOT_TOKEN = "ВСТАВЬТЕ_СЮДА_ВАШ_ТОКЕН"
 CHAT_ID = "-1003977168471"
 # -------------------
 
@@ -66,10 +66,10 @@ def handle_tilda():
         text_parts.extend(other_fields)
         text_parts.append("") # Пустая строка-разделитель
 
-    # Выводим текст пользователя в блоке <code>...</code> (клик = скопировано!)
+    # Используем <pre> - он объединяет все абзацы в ЕДИНЫЙ блок для копирования
     if user_text:
-        text_parts.append("👇 <i>Нажмите на текст ниже, чтобы скопировать:</i>")
-        text_parts.append(f"<code>{html.escape(user_text)}</code>")
+        text_parts.append("👇 <i>Нажмите на блок ниже, чтобы скопировать весь текст:</i>")
+        text_parts.append(f"<pre>{html.escape(user_text)}</pre>")
 
     caption = "\n".join(text_parts)
 
