@@ -51,24 +51,21 @@ def handle_tilda():
             file_url = fix_tilda_url(val)
             continue
         
-        # Если это поле с текстом объявления
+        # Поле с текстом сообщения
         if key in ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение']:
             user_text = val
         else:
-            # Для всех остальных полей (например: Имя, Телефон)
+            # Для всех остальных полей (Имя, Телефон и т.д.)
             other_fields.append(f"<b>{html.escape(key)}:</b> {html.escape(val)}")
 
-    # Собираем красивый и чистый текст сообщения
     text_parts = ["📩 <b>Новая заявка:</b>\n"]
 
-    # Если есть контакты или другие поля — выводим их
     if other_fields:
         text_parts.extend(other_fields)
-        text_parts.append("") # Пустая строка-разделитель
+        text_parts.append("") # Разделитель
 
-    # Используем <pre> - он объединяет все абзацы в ЕДИНЫЙ блок для копирования
     if user_text:
-        text_parts.append("👇 <i>Нажмите на блок ниже, чтобы скопировать весь текст:</i>")
+        text_parts.append("👇 <i>Нажмите на <b>&lt;/&gt;</b> в углу блока (на ПК) или на сам блок (на телефоне):</i>")
         text_parts.append(f"<pre>{html.escape(user_text)}</pre>")
 
     caption = "\n".join(text_parts)
@@ -79,16 +76,15 @@ def handle_tilda():
         "parse_mode": "HTML"
     }
     
-    # Добавляем кнопку ссылки на фото, если картинка прикреплена
     if file_url:
         main_payload["reply_markup"] = {
             "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
         }
 
-    # Отправляем сообщение
+    # Отправка текста
     requests.post(f"{TELEGRAM_API}/sendMessage", json=main_payload)
 
-    # Пробуем отправить саму картинку следом
+    # Отправка фото при наличии
     if file_url:
         photo_res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
             "chat_id": CHAT_ID,
