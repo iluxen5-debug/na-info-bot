@@ -8,7 +8,7 @@ import requests
 app = Flask(__name__)
 
 # --- ВАШИ ДАННЫЕ ---
-BOT_TOKEN = "ВСТАВЬТЕ_СЮДА_ВАШ_ТОКЕН"
+BOT_TOKEN = "8946727041:AAEG59i90oVSglspSY97RpxP1YHxnoEVIu4"
 CHAT_ID = "-1003977168471"
 # -------------------
 
