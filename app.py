@@ -26,11 +26,14 @@ def home():
 
 @app.route("/tilda-webhook", methods=["POST"])
 def handle_tilda():
+    # Получаем данные из Тильды
     data = request.form.to_dict()
+    
+    # Игнорируем тестовые запросы
     if data.get('test') == 'test':
         return jsonify({"status": "ok"}), 200
 
-    # Поля, которые ПОЛНОСТЬЮ ИГНОРИРУЕМ
+    # Список технических полей, которые мы вообще не показываем
     ignored = [
         'formid', 'formname', 'tranid', 'tildaspec', 'COOKIES',
         'messenger-type', 'messenger-id'
@@ -38,68 +41,67 @@ def handle_tilda():
 
     file_url = None
     user_text = ""
-    other_fields = []
+    contact_info = []
 
+    # Разбираем все пришедшие поля
     for key, value in data.items():
-        if key in ignored or not str(value).strip():
+        val = str(value).strip()
+        if not val or key in ignored:
             continue
         
-        val = str(value).strip()
-        
-        # Поиск ссылки на фото
+        # 1. Проверяем, не ссылка ли это на файл
         if not file_url and (val.startswith('http') and ('tupwidget' in val or 'tilda' in val)):
             file_url = fix_tilda_url(val)
             continue
         
-        # Текст объявления
-        if key in ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение']:
+        # 2. Определяем основное сообщение (Текст объявления)
+        if key in ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение', 'text_объявления']:
             user_text = val
         else:
-            # Контакты и остальные поля (Имя, Телефон)
-            other_fields.append(f"<b>{html.escape(key)}:</b> {html.escape(val)}")
+            # 3. Все остальное (Имя, Телефон и т.д.) идет в контакты
+            contact_info.append(f"<b>{key}:</b> {val}")
 
-    # --- СООБЩЕНИЕ 1: ТОЛЬКО ТЕКСТ ОБЪЯВЛЕНИЯ ---
+    # --- ОТПРАВКА СООБЩЕНИЯ №1: ЧИСТЫЙ ТЕКСТ ОБЪЯВЛЕНИЯ ---
     if user_text:
         payload1 = {
             "chat_id": CHAT_ID,
-            "text": f"<code>{html.escape(user_text)}</code>",
-            "parse_mode": "HTML"
+            "text": user_text  # Здесь нет никаких HTML тегов, просто текст
         }
-        
-        # Прикрепляем кнопку фото к первому сообщению
+        # Если есть фото, прикрепляем кнопку к тексту
         if file_url:
             payload1["reply_markup"] = {
                 "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
             }
-
+        
         requests.post(f"{TELEGRAM_API}/sendMessage", json=payload1)
-
-    # --- СООБЩЕНИЕ 2: КОНТАКТЫ ОТПРАВИТЕЛЯ (ОТДЕЛЬНО) ---
-    if other_fields:
-        contact_text = "📱 <b>Данные отправителя:</b>\n" + "\n".join(other_fields)
+    
+    # --- ОТПРАВКА СООБЩЕНИЯ №2: ДАННЫЕ ОТПРАВИТЕЛЯ ---
+    if contact_info:
         payload2 = {
             "chat_id": CHAT_ID,
-            "text": contact_text,
+            "text": "📱 <b>Данные отправителя:</b>\n\n" + "\n".join(contact_info),
             "parse_mode": "HTML"
         }
         requests.post(f"{TELEGRAM_API}/sendMessage", json=payload2)
 
-    # Попытка отправки самого изображения в чат
+    # --- ОТПРАВКА СООБЩЕНИЯ №3: ПОПЫТКА ПРИСЛАТЬ САМО ФОТО ---
     if file_url:
-        photo_res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
+        # Сначала просим Telegram скачать по ссылке
+        res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
             "chat_id": CHAT_ID,
             "photo": file_url
         })
         
-        if photo_res.status_code != 200:
+        # Если Telegram не смог (ошибка), пробуем скачать сами и отправить файлом
+        if res.status_code != 200:
             try:
-                headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-                img_data = requests.get(file_url, headers=headers, timeout=20).content
-                if len(img_data) > 5000:
+                h = {"User-Agent": "Mozilla/5.0"}
+                img = requests.get(file_url, headers=h, timeout=20).content
+                if len(img) > 5000:
                     requests.post(
                         f"{TELEGRAM_API}/sendPhoto",
                         data={"chat_id": CHAT_ID},
-                        files={"photo": ("image.jpg", BytesIO(img_data), "image/jpeg")}
+                        files={"photo": ("image.jpg", BytesIO(img), "image/jpeg")}
                     )
             except:
                 pass
