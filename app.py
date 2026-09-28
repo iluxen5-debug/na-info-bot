@@ -16,9 +16,12 @@ TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 def fix_tilda_url(url):
     """Исправляет кириллицу и пробелы в ссылках Тильды."""
-    parsed = urllib.parse.urlparse(url)
-    path = urllib.parse.quote(urllib.parse.unquote(parsed.path))
-    return urllib.parse.urlunparse(parsed._replace(path=path))
+    try:
+        parsed = urllib.parse.urlparse(url)
+        path = urllib.parse.quote(urllib.parse.unquote(parsed.path))
+        return urllib.parse.urlunparse(parsed._replace(path=path))
+    except:
+        return url
 
 @app.route("/", methods=["GET"])
 def home():
@@ -26,85 +29,76 @@ def home():
 
 @app.route("/tilda-webhook", methods=["POST"])
 def handle_tilda():
-    # Получаем данные из Тильды
     data = request.form.to_dict()
     
-    # Игнорируем тестовые запросы
+    # ЛОГИРОВАНИЕ: Это поможет нам увидеть, что именно присылает Тильда
+    print(f"ПОЛУЧЕНЫ ДАННЫЕ: {data}")
+
     if data.get('test') == 'test':
         return jsonify({"status": "ok"}), 200
 
-    # Список технических полей, которые мы вообще не показываем
-    ignored = [
-        'formid', 'formname', 'tranid', 'tildaspec', 'COOKIES',
-        'messenger-type', 'messenger-id'
-    ]
+    # Технические поля Тильды, которые мы не выводим вообще
+    system_fields = ['formid', 'formname', 'tranid', 'tildaspec', 'COOKIES']
 
     file_url = None
     user_text = ""
     contact_info = []
 
-    # Разбираем все пришедшие поля
+    # Ключи, которые мы считаем "Основным текстом"
+    main_text_keys = ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение', 'text_объявления']
+
     for key, value in data.items():
         val = str(value).strip()
-        if not val or key in ignored:
+        if not val or key in system_fields:
             continue
         
-        # 1. Проверяем, не ссылка ли это на файл
+        # 1. Ищем ссылку на файл
         if not file_url and (val.startswith('http') and ('tupwidget' in val or 'tilda' in val)):
             file_url = fix_tilda_url(val)
             continue
         
-        # 2. Определяем основное сообщение (Текст объявления)
-        if key in ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение', 'text_объявления']:
+        # 2. Ищем основной текст объявления
+        if key in main_text_keys and not user_text:
             user_text = val
         else:
-            # 3. Все остальное (Имя, Телефон и т.д.) идет в контакты
+            # 3. Все остальное (Телефон, Имя, messenger-id и т.д.)
             contact_info.append(f"<b>{key}:</b> {val}")
 
-    # --- ОТПРАВКА СООБЩЕНИЯ №1: ЧИСТЫЙ ТЕКСТ ОБЪЯВЛЕНИЯ ---
+    # --- СООБЩЕНИЕ №1: ТЕКСТ ОБЪЯВЛЕНИЯ ---
     if user_text:
-        payload1 = {
-            "chat_id": CHAT_ID,
-            "text": user_text  # Здесь нет никаких HTML тегов, просто текст
-        }
-        # Если есть фото, прикрепляем кнопку к тексту
+        payload1 = {"chat_id": CHAT_ID, "text": user_text}
         if file_url:
             payload1["reply_markup"] = {
                 "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
             }
-        
-        requests.post(f"{TELEGRAM_API}/sendMessage", json=payload1)
-    
-    # --- ОТПРАВКА СООБЩЕНИЯ №2: ДАННЫЕ ОТПРАВИТЕЛЯ ---
+        r1 = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload1)
+        print(f"Отправка текста: {r1.status_code}")
+    else:
+        print("Основной текст не найден в полях заявки.")
+
+    # --- СООБЩЕНИЕ №2: ДАННЫЕ ОТПРАВИТЕЛЯ (все остальные поля) ---
     if contact_info:
         payload2 = {
-            "chat_id": CHAT_ID,
+            "chat_id": CHAT_ID, 
             "text": "📱 <b>Данные отправителя:</b>\n\n" + "\n".join(contact_info),
             "parse_mode": "HTML"
         }
-        requests.post(f"{TELEGRAM_API}/sendMessage", json=payload2)
+        r2 = requests.post(f"{TELEGRAM_API}/sendMessage", json=payload2)
+        print(f"Отправка контактов: {r2.status_code} ({len(contact_info)} полей)")
+    else:
+        print("Дополнительные поля (контакты) не найдены.")
 
-    # --- ОТПРАВКА СООБЩЕНИЯ №3: ПОПЫТКА ПРИСЛАТЬ САМО ФОТО ---
+    # --- СООБЩЕНИЕ №3: ФОТО ---
     if file_url:
-        # Сначала просим Telegram скачать по ссылке
-        res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
-            "chat_id": CHAT_ID,
-            "photo": file_url
-        })
-        
-        # Если Telegram не смог (ошибка), пробуем скачать сами и отправить файлом
+        res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={"chat_id": CHAT_ID, "photo": file_url})
         if res.status_code != 200:
             try:
-                h = {"User-Agent": "Mozilla/5.0"}
-                img = requests.get(file_url, headers=h, timeout=20).content
+                img = requests.get(file_url, headers={"User-Agent": "Mozilla/5.0"}, timeout=20).content
                 if len(img) > 5000:
-                    requests.post(
-                        f"{TELEGRAM_API}/sendPhoto",
-                        data={"chat_id": CHAT_ID},
-                        files={"photo": ("image.jpg", BytesIO(img), "image/jpeg")}
-                    )
-            except:
-                pass
+                    requests.post(f"{TELEGRAM_API}/sendPhoto", data={"chat_id": CHAT_ID}, 
+                                  files={"photo": ("image.jpg", BytesIO(img), "image/jpeg")})
+            except Exception as e:
+                print(f"Ошибка загрузки фото: {e}")
 
     return jsonify({"status": "ok"}), 200
 
