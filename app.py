@@ -4,7 +4,7 @@ import requests
 app = Flask(__name__)
 
 # ВАШИ ДАННЫЕ (если меняли токен - вставьте новый сюда)
-BOT_TOKEN = "8946727041:AAEZE5AV_WPAJ8R7bMK0cGOybv52doF51CQ"
+BOT_TOKEN = "8946727041:AAEG59i90oVSglspSY97RpxP1YHxnoEVIu4"
 CHAT_ID = "-1003977168471"
 
 @app.route('/tilda-webhook', methods=['POST'])
