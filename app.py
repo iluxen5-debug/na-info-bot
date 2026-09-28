@@ -30,7 +30,7 @@ def handle_tilda():
     if data.get('test') == 'test':
         return jsonify({"status": "ok"}), 200
 
-    # Поля, которые ПОЛНОСТЬЮ СКРЫВАЕМ из сообщения
+    # Поля, которые ПОЛНОСТЬЮ ИГНОРИРУЕМ
     ignored = [
         'formid', 'formname', 'tranid', 'tildaspec', 'COOKIES',
         'messenger-type', 'messenger-id'
@@ -51,41 +51,40 @@ def handle_tilda():
             file_url = fix_tilda_url(val)
             continue
         
-        # Поле с текстом сообщения
+        # Текст объявления
         if key in ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение']:
             user_text = val
         else:
-            # Для всех остальных полей (Имя, Телефон и т.д.)
+            # Контакты и остальные поля (Имя, Телефон)
             other_fields.append(f"<b>{html.escape(key)}:</b> {html.escape(val)}")
 
-    text_parts = ["📩 <b>Новая заявка:</b>\n"]
-
-    if other_fields:
-        text_parts.extend(other_fields)
-        text_parts.append("") # Разделитель
-
+    # --- СООБЩЕНИЕ 1: ТОЛЬКО ТЕКСТ ОБЪЯВЛЕНИЯ ---
     if user_text:
-        # Сохраняем все оригинальные переносы строк внутри <code>
-        text_parts.append("👇 <b>Нажмите на текст ниже, чтобы скопировать:</b>")
-        text_parts.append(f"<code>{html.escape(user_text)}</code>")
-
-    caption = "\n".join(text_parts)
-
-    main_payload = {
-        "chat_id": CHAT_ID,
-        "text": caption,
-        "parse_mode": "HTML"
-    }
-    
-    if file_url:
-        main_payload["reply_markup"] = {
-            "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
+        payload1 = {
+            "chat_id": CHAT_ID,
+            "text": f"<code>{html.escape(user_text)}</code>",
+            "parse_mode": "HTML"
         }
+        
+        # Прикрепляем кнопку фото к первому сообщению
+        if file_url:
+            payload1["reply_markup"] = {
+                "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
+            }
 
-    # Отправка текста
-    requests.post(f"{TELEGRAM_API}/sendMessage", json=main_payload)
+        requests.post(f"{TELEGRAM_API}/sendMessage", json=payload1)
 
-    # Отправка фото при наличии
+    # --- СООБЩЕНИЕ 2: КОНТАКТЫ ОТПРАВИТЕЛЯ (ОТДЕЛЬНО) ---
+    if other_fields:
+        contact_text = "📱 <b>Данные отправителя:</b>\n" + "\n".join(other_fields)
+        payload2 = {
+            "chat_id": CHAT_ID,
+            "text": contact_text,
+            "parse_mode": "HTML"
+        }
+        requests.post(f"{TELEGRAM_API}/sendMessage", json=payload2)
+
+    # Попытка отправки самого изображения в чат
     if file_url:
         photo_res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
             "chat_id": CHAT_ID,
