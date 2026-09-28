@@ -5,302 +5,181 @@ from urllib.parse import unquote, urlparse
 
 from flask import Flask, request, jsonify
 import requests
-
 from PIL import Image, ImageOps, ImageFile
 
-# Позволяет Pillow открывать некоторые нестандартные JPEG
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 app = Flask(__name__)
 
+# Вставьте ваш действующий токен от BotFather
 BOT_TOKEN = "8946727041:AAEG59i90oVSglspSY97RpxP1YHxnoEVIu4"
 CHAT_ID = "-1003977168471"
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
+
+# Заголовки, чтобы маскироваться под обычный браузер Chrome
+BROWSER_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
+    "Accept-Language": "ru-RU,ru;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Referer": "https://tilda.cc/"
+}
 
 IMAGE_EXTENSIONS = (
     ".jpg", ".jpeg", ".png", ".webp",
     ".gif", ".bmp", ".heic"
 )
 
-
 def find_url(text):
-    """Находит ссылку в значении поля формы."""
     if not text:
         return None
-
     text = str(text).strip()
-
     if text.startswith("http://") or text.startswith("https://"):
         return text
-
     match = re.search(r'https?://[^\s<>"\']+', text)
     if match:
         return match.group(0)
-
     return None
 
-
 def is_file_or_image_url(url, field_name=""):
-    """Определяет, похоже ли значение на файл из Тильды."""
     if not url:
         return False
-
     decoded_url = unquote(url).lower()
     field_name = str(field_name).lower()
 
-    # Файлы, загруженные через формы Тильды
-    if "tupwidget.com" in decoded_url:
+    if "tupwidget.com" in decoded_url or "tilda" in decoded_url:
         return True
-
     if any(ext in decoded_url for ext in IMAGE_EXTENSIONS):
         return True
-
-    file_words = (
-        "фото", "файл", "картин", "изображ",
-        "photo", "file", "image", "upload", "attachment"
-    )
-
+    file_words = ("фото", "файл", "картин", "изображ", "photo", "file", "image", "upload")
     return any(word in field_name for word in file_words)
 
-
-def make_telegram_jpeg(file_bytes):
-    """
-    Открывает картинку и сохраняет её как обычный JPEG,
-    понятный Telegram.
-    """
+def convert_to_clean_jpeg(file_bytes):
+    """Преобразует любое изображение в чистый стандартный JPEG."""
     image = Image.open(BytesIO(file_bytes))
-
-    # Учитываем поворот фото из метаданных
     image = ImageOps.exif_transpose(image)
 
-    # PNG с прозрачностью / палитровые изображения переводим на белый фон
     if image.mode in ("RGBA", "LA", "P"):
         background = Image.new("RGB", image.size, "white")
-
         if image.mode == "P":
             image = image.convert("RGBA")
-
         if image.mode in ("RGBA", "LA"):
             background.paste(image, mask=image.getchannel("A"))
         else:
             background.paste(image)
-
         image = background
     else:
         image = image.convert("RGB")
 
-    # Telegram принимает фото с суммой ширины и высоты не более 10000 px.
-    # Уменьшаем слишком большие изображения.
-    max_sum = 9500
-    width, height = image.size
+    max_size = 4096
+    if image.width > max_size or image.height > max_size:
+        image.thumbnail((max_size, max_size), Image.LANCZOS)
 
-    if width + height > max_sum:
-        scale = max_sum / (width + height)
-        new_width = max(1, int(width * scale))
-        new_height = max(1, int(height * scale))
-        image = image.resize((new_width, new_height), Image.LANCZOS)
-
-    # Сохраняем в стандартный JPEG
     output = BytesIO()
-    image.save(
-        output,
-        format="JPEG",
-        quality=90,
-        optimize=True
-    )
+    image.save(output, format="JPEG", quality=88, optimize=True)
     output.seek(0)
-
     return output
-
 
 @app.route("/", methods=["GET"])
 def home():
-    return "Tilda Telegram bot is working", 200
-
+    return "Bot is running", 200
 
 @app.route("/tilda-webhook", methods=["POST"])
 def handle_tilda():
     data = request.form.to_dict()
 
-    # Проверочный запрос от Тильды
     if data.get("test") == "test":
         return jsonify({"status": "ok"}), 200
 
-    ignored_keys = [
-        "formid",
-        "formname",
-        "tranid",
-        "tildaspec",
-        "COOKIES"
-    ]
-
+    ignored_keys = ["formid", "formname", "tranid", "tildaspec", "COOKIES"]
     file_url = None
-    text_lines = ["<b>📩 Новая заявка с сайта</b>\n"]
+    text_lines = ["<b>📩 Новая заявка с сайта:</b>\n"]
 
     for key, value in data.items():
         if key in ignored_keys:
             continue
-
-        value = str(value).strip()
-
-        if not value:
+        val_str = str(value).strip()
+        if not val_str:
             continue
 
-        possible_url = find_url(value)
-
-        # Ссылку на файл не выводим в сообщении:
-        # вместо этого скачаем и приложим файл.
-        if (
-            not file_url
-            and possible_url
-            and is_file_or_image_url(possible_url, key)
-        ):
+        possible_url = find_url(val_str)
+        if not file_url and possible_url and is_file_or_image_url(possible_url, key):
             file_url = possible_url
             continue
 
         safe_key = html.escape(str(key))
-        safe_value = html.escape(value)
-
-        text_lines.append(f"<b>{safe_key}:</b> {safe_value}")
+        safe_val = html.escape(val_str)
+        text_lines.append(f"<b>{safe_key}:</b> {safe_val}")
 
     caption = "\n".join(text_lines)
-
-    # Лимит подписи Telegram у фотографии — 1024 символа
     if len(caption) > 1000:
         caption = caption[:1000] + "..."
 
+    if not file_url:
+        # Нет файла — отправляем обычный текст
+        requests.post(f"{TELEGRAM_API}/sendMessage", json={
+            "chat_id": CHAT_ID,
+            "text": caption,
+            "parse_mode": "HTML"
+        }, timeout=30)
+        return jsonify({"status": "ok"}), 200
+
+    print(f"Скачиваем файл по ссылке: {file_url}")
+
     try:
-        # Если в форме есть файл
-        if file_url:
-            print(f"Найден файл: {file_url}")
+        # Скачиваем файл с эмуляцией реального браузера
+        response = requests.get(file_url, headers=BROWSER_HEADERS, timeout=45)
+        response.raise_for_status()
+        raw_bytes = response.content
 
-            file_response = requests.get(
-                file_url,
-                timeout=60,
-                headers={
-                    "User-Agent": "Mozilla/5.0"
-                }
-            )
-            file_response.raise_for_status()
-
-            original_file = file_response.content
-
-            parsed_url = urlparse(file_url)
-            original_name = unquote(parsed_url.path.split("/")[-1])
-
-            if not original_name:
-                original_name = "image.jpg"
-
-            try:
-                # Переводим картинку в безопасный JPEG
-                jpeg_file = make_telegram_jpeg(original_file)
-
-                telegram_response = requests.post(
-                    f"{TELEGRAM_API}/sendPhoto",
-                    data={
-                        "chat_id": CHAT_ID,
-                        "caption": caption,
-                        "parse_mode": "HTML"
-                    },
-                    files={
-                        "photo": (
-                            "photo.jpg",
-                            jpeg_file,
-                            "image/jpeg"
-                        )
-                    },
-                    timeout=90
-                )
-
-                print(
-                    f"Ответ Telegram / sendPhoto "
-                    f"({telegram_response.status_code}): "
-                    f"{telegram_response.text}"
-                )
-
-                # Если Telegram всё равно не принял фото,
-                # отправляем как обычный файл.
-                if telegram_response.status_code != 200:
-                    print("Не удалось отправить как фото. Отправляем документом.")
-
-                    telegram_response = requests.post(
-                        f"{TELEGRAM_API}/sendDocument",
-                        data={
-                            "chat_id": CHAT_ID,
-                            "caption": caption,
-                            "parse_mode": "HTML"
-                        },
-                        files={
-                            "document": (
-                                original_name,
-                                BytesIO(original_file),
-                                "application/octet-stream"
-                            )
-                        },
-                        timeout=90
-                    )
-
-                    print(
-                        f"Ответ Telegram / sendDocument "
-                        f"({telegram_response.status_code}): "
-                        f"{telegram_response.text}"
-                    )
-
-            except Exception as image_error:
-                # Если это не картинка или Pillow не смог открыть её —
-                # отправляем вложением как файл.
-                print(
-                    "Не удалось обработать как изображение: "
-                    f"{image_error}"
-                )
-
-                telegram_response = requests.post(
-                    f"{TELEGRAM_API}/sendDocument",
-                    data={
-                        "chat_id": CHAT_ID,
-                        "caption": caption,
-                        "parse_mode": "HTML"
-                    },
-                    files={
-                        "document": (
-                            original_name,
-                            BytesIO(original_file),
-                            "application/octet-stream"
-                        )
-                    },
-                    timeout=90
-                )
-
-                print(
-                    f"Ответ Telegram / sendDocument "
-                    f"({telegram_response.status_code}): "
-                    f"{telegram_response.text}"
-                )
-
-        # Если в форме нет картинки или файла
-        else:
-            telegram_response = requests.post(
-                f"{TELEGRAM_API}/sendMessage",
-                json={
+        # Если вернулся HTML (ошибка авторизации/доступа), а не файл
+        if raw_bytes.startswith(b"<!DOCTYPE") or raw_bytes.startswith(b"<html") or len(raw_bytes) < 500:
+            print("Тильда вернула HTML-страницу вместо картинки. Пробуем отправку по прямой ссылке...")
+            # Шлем через прямое URL-фото в Telegram
+            res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
+                "chat_id": CHAT_ID,
+                "photo": file_url,
+                "caption": caption,
+                "parse_mode": "HTML"
+            }, timeout=30)
+            
+            if res.status_code != 200:
+                # Если и так не вышло — шлем текст со ссылкой
+                requests.post(f"{TELEGRAM_API}/sendMessage", json={
                     "chat_id": CHAT_ID,
-                    "text": caption,
+                    "text": f"{caption}\n\n<b>Ссылка на файл:</b> {file_url}",
                     "parse_mode": "HTML"
-                },
-                timeout=30
-            )
+                }, timeout=30)
+            return jsonify({"status": "ok"}), 200
 
-            print(
-                f"Ответ Telegram / sendMessage "
-                f"({telegram_response.status_code}): "
-                f"{telegram_response.text}"
-            )
+        # Конвертируем в полноценный JPEG
+        jpeg_stream = convert_to_clean_jpeg(raw_bytes)
 
-    except Exception as error:
-        print(f"ОБЩАЯ ОШИБКА: {error}")
+        # Отправляем нормальное фото в Telegram
+        res = requests.post(
+            f"{TELEGRAM_API}/sendPhoto",
+            data={
+                "chat_id": CHAT_ID,
+                "caption": caption,
+                "parse_mode": "HTML"
+            },
+            files={
+                "photo": ("image.jpg", jpeg_stream, "image/jpeg")
+            },
+            timeout=60
+        )
+        print(f"Ответ Telegram API: {res.status_code} {res.text}")
+
+    except Exception as e:
+        print(f"Ошибка при обработке файла: {e}")
+        # Запасной вариант: отправляем сообщение со ссылкой
+        requests.post(f"{TELEGRAM_API}/sendMessage", json={
+            "chat_id": CHAT_ID,
+            "text": f"{caption}\n\n<b>Ссылка на фото:</b> {file_url}",
+            "parse_mode": "HTML"
+        }, timeout=30)
 
     return jsonify({"status": "ok"}), 200
-
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
