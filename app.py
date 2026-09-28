@@ -30,54 +30,76 @@ def handle_tilda():
     if data.get('test') == 'test':
         return jsonify({"status": "ok"}), 200
 
-    ignored = ['formid', 'formname', 'tranid', 'tildaspec', 'COOKIES']
+    # Поля, которые ПОЛНОСТЬЮ СКРЫВАЕМ из сообщения
+    ignored = [
+        'formid', 'formname', 'tranid', 'tildaspec', 'COOKIES',
+        'messenger-type', 'messenger-id'
+    ]
+
     file_url = None
-    text_parts = ["<b>📩 Новая заявка:</b>\n"]
+    user_text = ""
+    other_fields = []
 
     for key, value in data.items():
         if key in ignored or not str(value).strip():
             continue
         
         val = str(value).strip()
-        # Поиск ссылки
+        
+        # Поиск ссылки на фото
         if not file_url and (val.startswith('http') and ('tupwidget' in val or 'tilda' in val)):
             file_url = fix_tilda_url(val)
             continue
         
-        text_parts.append(f"<b>{html.escape(key)}:</b> {html.escape(val)}")
+        # Если это поле с текстом объявления
+        if key in ['Текст_объявления', 'Text', 'message', 'Message', 'Сообщение']:
+            user_text = val
+        else:
+            # Для всех остальных полей (например: Имя, Телефон)
+            other_fields.append(f"<b>{html.escape(key)}:</b> {html.escape(val)}")
+
+    # Собираем красивый и чистый текст сообщения
+    text_parts = ["📩 <b>Новая заявка:</b>\n"]
+
+    # Если есть контакты или другие поля — выводим их
+    if other_fields:
+        text_parts.extend(other_fields)
+        text_parts.append("") # Пустая строка-разделитель
+
+    # Выводим текст пользователя в блоке <code>...</code> (клик = скопировано!)
+    if user_text:
+        text_parts.append("👇 <i>Нажмите на текст ниже, чтобы скопировать:</i>")
+        text_parts.append(f"<code>{html.escape(user_text)}</code>")
 
     caption = "\n".join(text_parts)
 
-    # 1. Сначала всегда отправляем ТЕКСТ (чтобы заявка не потерялась)
-    # Если есть файл, добавим кнопку, если нет - просто текст
     main_payload = {
         "chat_id": CHAT_ID,
         "text": caption,
         "parse_mode": "HTML"
     }
     
+    # Добавляем кнопку ссылки на фото, если картинка прикреплена
     if file_url:
         main_payload["reply_markup"] = {
             "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
         }
 
-    # Отправляем основной текст
+    # Отправляем сообщение
     requests.post(f"{TELEGRAM_API}/sendMessage", json=main_payload)
 
-    # 2. Если есть файл, ПЫТАЕМСЯ прислать его как фото (отдельным сообщением для наглядности)
+    # Пробуем отправить саму картинку следом
     if file_url:
-        # Попытка 1: Просим Telegram скачать по ссылке
         photo_res = requests.post(f"{TELEGRAM_API}/sendPhoto", json={
             "chat_id": CHAT_ID,
             "photo": file_url
         })
         
-        # Попытка 2: Если не вышло (ошибка 400), пробуем скачать сами с другими заголовками
         if photo_res.status_code != 200:
             try:
                 headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
                 img_data = requests.get(file_url, headers=headers, timeout=20).content
-                if len(img_data) > 5000: # Проверка, что это не маленькая ошибка HTML
+                if len(img_data) > 5000:
                     requests.post(
                         f"{TELEGRAM_API}/sendPhoto",
                         data={"chat_id": CHAT_ID},
