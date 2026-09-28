@@ -65,12 +65,9 @@ def handle_tilda():
         text_parts.append("") # Разделитель
 
     if user_text:
-        # Объединяем абзацы в единый сплошной плашечный блок.
-        # Это делает текст 100% кликабельным в 1 касание на Android, ПК и Unigram без меню!
-        clean_copiable_text = re.sub(r'[\r\n]+', '  •  ', user_text)
-        
-        text_parts.append("👇 <b>Нажмите на текст ниже, чтобы скопировать (1 клик):</b>")
-        text_parts.append(f"<code>{html.escape(clean_copiable_text)}</code>")
+        # Сохраняем все оригинальные переносы строк внутри <code>
+        text_parts.append("👇 <b>Нажмите на текст ниже, чтобы скопировать:</b>")
+        text_parts.append(f"<code>{html.escape(user_text)}</code>")
 
     caption = "\n".join(text_parts)
 
