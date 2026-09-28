@@ -14,6 +14,15 @@ CHAT_ID = "-1003977168471"
 
 TELEGRAM_API = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
+# Словарь для замены длинных имен полей из Тильды на короткие
+FIELD_MAPPING = {
+    'Название_группы': 'Название',
+    'Добавить_или_удалить_собрание': 'Что сделать?',
+    'День_недели': 'День',
+    'Укажи_время_собрания': 'Время',
+    'Укажи_формат_если_добавляешь_собрание': 'Формат'
+}
+
 def fix_tilda_url(url):
     """Исправляет кириллицу и пробелы в ссылках Тильды."""
     try:
@@ -29,12 +38,10 @@ def format_contact_link(m_type, m_id):
     m_type = str(m_type).lower().strip()
     
     if 'phone' in m_type or m_id_clean.startswith('+'):
-        # Убираем всё кроме цифр и плюса для ссылки tel:
         link_val = re.sub(r'[^\d+]', '', m_id_clean)
         return f'<a href="tel:{link_val}">{m_id_clean}</a>'
     
     if 'telegram' in m_type:
-        # Убираем собачку, если она есть, для ссылки t.me
         link_val = m_id_clean.replace('@', '')
         return f'<a href="https://t.me/{link_val}">@{link_val}</a>'
     
@@ -58,7 +65,6 @@ def handle_tilda():
     file_url = None
     user_text = ""
     
-    # Для обработки контактов
     m_type = ""
     m_id = ""
     other_fields = []
@@ -78,7 +84,7 @@ def handle_tilda():
             user_text = val
             continue
 
-        # 3. Собираем данные для кликабельной связи
+        # 3. Данные для кликабельной связи
         if key == 'messenger-type':
             m_type = val
             continue
@@ -86,10 +92,11 @@ def handle_tilda():
             m_id = val
             continue
             
-        # Все остальные поля
-        other_fields.append(f"<b>{key}:</b> {val}")
+        # 4. Переименование длинных ключей
+        clean_key = FIELD_MAPPING.get(key, key.replace('_', ' '))
+        other_fields.append(f"<b>{clean_key}:</b> {val}")
 
-    # --- СООБЩЕНИЕ №1: ТЕКСТ ОБЪЯВЛЕНИЯ ---
+    # --- СООБЩЕНИЕ №1: ТЕКСТ ОБЪЯВЛЕНИЯ (если есть) ---
     if user_text:
         payload1 = {"chat_id": CHAT_ID, "text": user_text}
         if file_url:
@@ -98,15 +105,15 @@ def handle_tilda():
             }
         requests.post(f"{TELEGRAM_API}/sendMessage", json=payload1)
 
-    # --- СООБЩЕНИЕ №2: ДАННЫЕ ОТПРАВИТЕЛЯ ---
+    # --- СООБЩЕНИЕ №2: ДАННЫЕ ИЗ ФОРМЫ С КОРОТКИМИ ПОДПИСЯМИ ---
     contact_parts = ["📱 <b>Данные отправителя:</b>\n"]
     
-    # Добавляем кликабельный контакт в самое начало
+    # Кликабельный контакт в начале
     if m_id:
         contact_link = format_contact_link(m_type or "phone", m_id)
         contact_parts.append(f"🔗 <b>Связаться:</b> {contact_link}")
     
-    # Добавляем остальные поля
+    # Добавляем переименованные поля
     if other_fields:
         contact_parts.extend(other_fields)
 
@@ -115,8 +122,15 @@ def handle_tilda():
             "chat_id": CHAT_ID, 
             "text": "\n".join(contact_parts),
             "parse_mode": "HTML",
-            "disable_web_page_preview": True # Чтобы не грузилось превью ссылки t.me
+            "disable_web_page_preview": True
         }
+        
+        # Если первого текста не было, прикрепим кнопку фото сюда
+        if not user_text and file_url:
+            payload2["reply_markup"] = {
+                "inline_keyboard": [[{"text": "🖼 Открыть фото", "url": file_url}]]
+            }
+            
         requests.post(f"{TELEGRAM_API}/sendMessage", json=payload2)
 
     # --- СООБЩЕНИЕ №3: ФОТО ---
