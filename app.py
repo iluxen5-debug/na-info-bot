@@ -1,9 +1,9 @@
+import html
 from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
 
-# ВАШИ ДАННЫЕ (если меняли токен - вставьте новый сюда)
 BOT_TOKEN = "8946727041:AAEG59i90oVSglspSY97RpxP1YHxnoEVIu4"
 CHAT_ID = "-1003977168471"
 
@@ -11,35 +11,39 @@ CHAT_ID = "-1003977168471"
 def handle_tilda():
     data = request.form.to_dict()
 
-    # Игнорируем тестовый пинг от Тильды
+    # Игнорируем тестовые запросы от Тильды
     if data.get('test') == 'test':
         return jsonify({"status": "ok"}), 200
 
     image_url = None
     text_lines = ["<b>📩 Новая заявка с сайта:</b>\n"]
 
-    # Служебные поля, которые не нужно показывать в чате
     ignored_keys = ['formid', 'formname', 'tranid', 'tildaspec', 'COOKIES']
 
     for key, value in data.items():
         if key in ignored_keys or not str(value).strip():
             continue
 
-        val_lower = str(value).lower()
-        # Проверяем, является ли ссылка картинкой
+        val_str = str(value)
+        val_lower = val_str.lower()
+
+        # Ищем ссылку на фото
         is_image = (
             val_lower.startswith('http') and 
             any(ext in val_lower for ext in ['.jpg', '.jpeg', '.png', '.webp', '.heic', '.gif'])
         )
 
         if is_image and not image_url:
-            image_url = value
+            image_url = val_str
         else:
-            text_lines.append(f"<b>{key}:</b> {value}")
+            # Экранируем спецсимволы, чтобы Telegram не выдавал ошибку HTML
+            safe_key = html.escape(str(key))
+            safe_val = html.escape(val_str)
+            text_lines.append(f"<b>{safe_key}:</b> {safe_val}")
 
     caption_text = "\n".join(text_lines)
 
-    # Отправка в Телеграм
+    # Пробуем отправить фото с подписью
     if image_url:
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendPhoto"
         payload = {
@@ -48,18 +52,30 @@ def handle_tilda():
             "caption": caption_text,
             "parse_mode": "HTML"
         }
+        res = requests.post(url, json=payload)
+        
+        # Если Telegram отклонил картинку (например, формат не тот), шлем как текст
+        if res.status_code != 200:
+            print(f"Ошибка отправки фото: {res.text}. Пробуем отправить текстом...")
+            url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+            payload = {
+                "chat_id": CHAT_ID,
+                "text": caption_text + f"\n\n<b>Ссылка на файл:</b> {image_url}",
+                "parse_mode": "HTML"
+            }
+            res = requests.post(url, json=payload)
     else:
+        # Если фото нет — отправляем обычное текстовое сообщение
         url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
         payload = {
             "chat_id": CHAT_ID,
             "text": caption_text,
             "parse_mode": "HTML"
         }
+        res = requests.post(url, json=payload)
 
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Error: {e}")
+    # Логируем ответ от Telegram в Render (для отладки)
+    print(f"Ответ Telegram API ({res.status_code}): {res.text}")
 
     return jsonify({"status": "ok"}), 200
 
